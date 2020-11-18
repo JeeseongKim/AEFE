@@ -3,22 +3,10 @@
 import torch
 from torch import nn
 import math
-from PIL import Image
-import glob
-from torchvision import transforms
-from torchvision.utils import save_image
-import os
-import cv2
-import numpy as np
-from model.layers import Conv, Residual, Hourglass, UnFlatten, Merge, Linear, dec_Linear, img_rsz_Linear
-import scipy
-import matplotlib.pyplot as plt
-from torch.autograd import Variable
 
 class loss_concentration(nn.Module):
     def __init__(self):
         super(loss_concentration, self).__init__()
-        #print("***")
 
     def forward(self, DetectionMap, zeta):
         conc_loss = 0
@@ -29,10 +17,8 @@ class loss_concentration(nn.Module):
         for b in range(DetectionMap.shape[0]):
             for k in range(DetectionMap.shape[1]):
                 get_std[b, k, :, :] = DetectionMap[b, k, :, :] / zeta[b, k]
-                cur_map = get_std[b, k, :, :]
-                #print("cur_map shape", cur_map.shape)
                 std_x[b, k] = torch.var(torch.var(get_std[b, k, :, :], 1))
-                #print("std_x", torch.var(get_std[b, k, :, :], 1))
+                #print("std_x", std_x[b, k])
                 std_y[b, k] = torch.var(torch.var(get_std[b, k, :, :], 0))
                 #print("std_y", std_y[b, k])
                 #dev[k] = 0.5 * (std_x[k] ** 2 + std_y[k] ** 2)

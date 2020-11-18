@@ -1,17 +1,7 @@
 import torch
 from torch import nn
-import matplotlib.pyplot as plt
-from PIL import Image
-import glob
-from torch.autograd import Variable
-import torchvision
-from torchvision import transforms
-from torchvision.utils import save_image
-import os
-import cv2
-import numpy as np
-from model.layers import Conv, Residual, Hourglass, UnFlatten, Merge, Pool, upsample_recon
-from model.Heatmap import HeatmapLoss, GenerateHeatmap
+from model.layers import Conv, Residual, Hourglass, Merge, Pool, upsample_recon
+from model.Heatmap import HeatmapLoss
 
 class StackedHourglassForKP(nn.Module):
     def __init__(self, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):
@@ -63,12 +53,14 @@ class StackedHourglassForKP(nn.Module):
         x = imgs #(b,3,192,256)
         x = self.pre(x) #(b,3,192,256)
         combined_hm_preds = []
+        append = combined_hm_preds.append
         for i in range(self.nstack):
             hg = self.hgs[i](x)
             #print("hg", hg.shape) #(b, 256, 96, 128)
             feature = self.features[i](hg)
             preds = self.outs[i](feature) #--> heatmap prediction
-            combined_hm_preds.append(preds)
+            #combined_hm_preds.append(preds)
+            append(preds)
             #print("combined_hm_preds", combined_hm_preds.shape)
             if i < self.nstack - 1:
                 x = x + self.merge_preds[i](preds) + self.merge_features[i](feature)
@@ -139,11 +131,11 @@ class StackedHourglassForDesc(nn.Module):
         return torch.stack(combined_hm_preds, 1)
 
 class StackedHourglassImgRecon(nn.Module):
-    def __init__(self, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):
+    def __init__(self,num_of_kp, nstack, inp_dim, oup_dim, bn=False, increase=0, **kwargs):
         super(StackedHourglassImgRecon, self).__init__()
         self.nstack = nstack
         self.pre = nn.Sequential(
-            Conv(100, 128, 3, 1, bn=True, relu=True), #(2n, hidden_1, 3,1)
+            Conv(2*num_of_kp, 128, 3, 1, bn=True, relu=True), #(2n, hidden_1, 3,1)
             Conv(128, 128, 3, 1, bn=True, relu=True),
             #upsample_recon(2, mode='bilinear', align_corners=True),
             Residual(128, 128),
@@ -191,6 +183,7 @@ class StackedHourglassImgRecon(nn.Module):
         x = model_upsample(x)
         #print("upsample_x",  x.shape) #(1,256,192,256)
         combined_hm_preds = []
+        append = combined_hm_preds.append
         for i in range(self.nstack):
             hg = self.hgs[i](x)
             #print("hg", hg.shape) #(1,256,192,256)
@@ -199,7 +192,8 @@ class StackedHourglassImgRecon(nn.Module):
             preds = self.outs[i](feature)  # --> heatmap prediction
             #print("111")
             #print("preds", preds.shape) #--> (1,16,64,64)
-            combined_hm_preds.append(preds)
+            #combined_hm_preds.append(preds)
+            append(preds)
             #print("222")
             if i < self.nstack - 1:
                 x = x + self.merge_preds[i](preds) + self.merge_features[i](feature)

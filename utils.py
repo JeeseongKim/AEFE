@@ -3,13 +3,10 @@ from torch import nn
 import random
 import math
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from PIL import Image
 import glob
 from torchvision import transforms
-from torchvision.utils import save_image
-from torch.autograd import Variable
-import os
 import cv2
 
 
