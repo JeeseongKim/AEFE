@@ -8,7 +8,7 @@ import numpy as np
 from model.layers import Linear, dec_Linear
 from StackedHourglass import StackedHourglassForKP, StackedHourglassImgRecon
 from DetectionConfidenceMap import DetectionConfidenceMap2keypoint, ReconDetectionConfidenceMap, create_softmask
-from loss import loss_concentration, loss_separation
+from loss import loss_concentration, loss_separation, loss_reconstruction
 from utils import my_dataset
 
 from torch.multiprocessing import Process
@@ -20,9 +20,8 @@ warnings.filterwarnings("ignore")
 from torch.utils.data import TensorDataset, DataLoader
 
 import visdom
-vis = visdom.Visdom()
+#vis = visdom.Visdom()
 #plot = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]))
-plot = vis.line(Y=torch.tensor([0]), X=torch.tensor([0]))
 draw_epoch = []
 draw_loss = []
 
@@ -93,33 +92,26 @@ def train():
 
             input_img = Variable(input_img).cuda()
             aefe_input = input_img[:, 0, :, :, :] #(b, 3, 192, 256)
+
             cur_batch = aefe_input.shape[0]
 
             combined_hm_preds = model_StackedHourglassForKP(aefe_input)
-            combined_hm_preds = Variable(combined_hm_preds.type(dtype), requires_grad=True)
-            combined_hm_preds = combined_hm_preds[:, num_nstack-1, :, :, :] # => last layer #(1,n,96,128)
+            combined_hm_preds = Variable(combined_hm_preds.type(dtype), requires_grad=True) #(b, n_stack, n, 96, 128)
+            combined_hm_preds = combined_hm_preds[:, num_nstack-1, :, :, :] # => last layer #(b,n,96,128)
 
             fn_DetectionConfidenceMap2keypoint = DetectionConfidenceMap2keypoint(shgs_out=combined_hm_preds, shgs_out_dim=stacked_hourglass_oupdim_kp)
-            #fn_DetectionConfidenceMap2keypoint = nn.DataParallel(fn_DetectionConfidenceMap2keypoint)
-            fn_DetectionConfidenceMap2keypoint
             DetectionMap, keypoints, zeta = fn_DetectionConfidenceMap2keypoint(combined_hm_preds.cuda(), cur_batch, num_of_kp)
-            #print("kp size", keypoints.shape)
-            #print("kp time :", time.time() - start)
-            #print("---DetectionMap and Keypoints are generated---")
 
             ############################## My Loss Function ############################
             #loss_fn_start = time.time()
             fn_loss_concentration = loss_concentration().cuda()
-            #fn_loss_concentration = DataParallelCriterion(fn_loss_concentration)
-            cur_conc_loss = fn_loss_concentration(DetectionMap, zeta)
+            #cur_conc_loss = fn_loss_concentration(DetectionMap, zeta)
 
             fn_loss_separation = loss_separation().cuda()
-            #fn_loss_separation = DataParallelCriterion(fn_loss_separation)
             cur_sep_loss = fn_loss_separation(keypoints)
 
-            fn_loss_recon = torch.nn.MSELoss().cuda()
-            #fn_loss_recon = DataParallelCriterion(fn_loss_recon)
-            #print("loss function setup time: ", time.time() - loss_fn_start)
+            fn_loss_recon = loss_reconstruction().cuda()
+
             #############################################################################
 
             ## descriptors
@@ -140,22 +132,13 @@ def train():
             Wk_ = Variable(Wk_.type(dtype), requires_grad=True)
             #print("descriptor weight: ", time.time() - descriptor_time)
 
-            ######-------decoder std -------######
-            std_x = 5
-            std_y = 5
-            correlation = 0.3
-
-            softmask_std_x = std_x
-            softmask_std_y = std_y
-            reconDetectionMap_std_x = std_x
-            reconDetectionMap_std_y = std_y
-            #######################################
-
             #softmask_start = time.time()
             fn_softmask = create_softmask()
-            softmask = fn_softmask(softmask_std_x, softmask_std_y, keypoints, DetectionMap, zeta) #(b,k,96,128)
+            softmask = fn_softmask(DetectionMap, zeta) #(b,k,96,128)
             #softmask = softmask.cuda()
             #print("softmask creation time :", time.time() - softmask_start)
+
+            cur_conc_loss = fn_loss_concentration(softmask)
 
             descriptor_gen_time = time.time()
             mul_all_torch = torch.zeros(softmask.shape[0], softmask.shape[1], 1)
@@ -181,7 +164,7 @@ def train():
             recon_start = time.time()
             fn_reconDetectionMap = ReconDetectionConfidenceMap()
             fn_reconDetectionMap = fn_reconDetectionMap
-            reconDetectionMap = fn_reconDetectionMap(cur_batch, keypoints, reconDetectionMap_std_x, reconDetectionMap_std_y, correlation, DetectionMap)
+            reconDetectionMap = fn_reconDetectionMap(cur_batch, keypoints, DetectionMap)
             #print("recon time: ", time.time() - recon_start)
             #print("---DetectionMaps are generated---")
 
@@ -199,16 +182,20 @@ def train():
             #print("recon descriptor time: ", time.time() - dec_descriptor_start)
 
             reconFeatureMap = dec_Wk * reconDetectionMap
-            concat_recon = torch.cat((reconDetectionMap, reconFeatureMap), 1) #(b, 2n, 96, 128)
+            # reconDetectionMap shape [b, n, 96, 128]
+            # reconFeatureMap shape [b, n, 96, 128]
+            concat_recon = torch.cat((reconDetectionMap, reconFeatureMap), 1) #(b, 2n, 96, 128) channel-wise concatenation
             #concat_recon = concat_recon.view(concat_recon.shape[0], concat_recon.shape[1], concat_recon.shape[2], concat_recon.shape[3]).cuda(1)
             #print("concat_recon", concat_recon.shape)  #(b, 2n, 96, 128)
 
-            recon_img_start = time.time()
             reconImg = model_StackedHourglassImgRecon(concat_recon).cuda(1)
             reconImg = Variable(reconImg.type(dtype), requires_grad=True).cuda(1) #(b, 8, 3, 192, 256)
             #print("reconImg111", reconImg.shape)
             reconImg = reconImg[:, num_nstack-1, :, :, :] #(b,3,192,256)
-            #print("recon img time: ", time.time() - recon_img_start)
+
+            my_sigmoid = nn.Sigmoid()
+            reconImg = my_sigmoid(reconImg)
+            reconImg = 0.5 * torch.log(1 + 2 * torch.exp(reconImg))
 
             # ================Backward================
             #print("---Optimizer---")
@@ -218,22 +205,20 @@ def train():
             optimizer_ImgRecon.zero_grad()
 
             cur_recon_loss = fn_loss_recon(reconImg.cuda(), aefe_input.cuda())
-
+            #print("**", cur_recon_loss)
             loss = 1 * cur_conc_loss.cuda() + 0.8 * cur_sep_loss.cuda() + 6000*cur_recon_loss.cuda()
+
             print("Loss=>", "concentration loss: ", cur_conc_loss.item(), ",", "separation loss: ", cur_sep_loss.item(), "," , "cur_recon_loss: ", cur_recon_loss.item())
-
-
             """
             #save img tmp
             print("saving my currently reconstructed image")
             save_my_reconImg_tmp = reconImg.detach().cpu().numpy()
-            save_image(reconImg, "test.jpg")
+            save_image(reconImg, "test_%s_%s.jpg" % (cur_filename, epoch))
             print("----saving is done----")
             """
             loss.backward()
 
             optimizer_StackedHourglass_kp.step()
-            #optimizer_StackedHourglass_desc.step()
             optimizer_Wk_.step()
             optimizer_decfeatureDescriptor.step()
             optimizer_ImgRecon.step()
@@ -250,14 +235,13 @@ def train():
             #vis.line(Y=draw_loss, X=draw_epoch, win=plot, update='append')
 
         print('epoch [{}/{}], loss:{:.4f} '.format(epoch + 1, num_epochs, running_loss))
-        vis.line(Y=[running_loss], X=np.array([epoch]), win=plot, update='append')
         #vis.line(Y=[running_loss], X=np.array([epoch]), win=plot, update='append')
 
         save_loss.append(running_loss)
 
         if (epoch % 10 == 0):
             img_save_filename = ("SaveReconstructedImg/recon_%s_epoch_%s.jpg" % (cur_filename, epoch))
-            save_my_reconImg = reconImg.detach().cpu().numpy()
+            #save_my_reconImg = reconImg.detach().cpu().numpy()
             save_image(reconImg, img_save_filename)
             ##print("---saving image--- ", img_save_filename)
 

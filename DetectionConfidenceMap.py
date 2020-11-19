@@ -74,10 +74,13 @@ class ReconDetectionConfidenceMap(nn.Module):
     def __init__(self):
         super(ReconDetectionConfidenceMap, self).__init__()
 
-    def forward(self, batch_size, keypoints, reconDetectionMap_std_x, reconDetectionMap_std_y, correlation, DetectionMap):
-        start = time.time()
+    def forward(self, batch_size, keypoints, DetectionMap):
+
+        correlation = 0.3
+        reconDetectionMap_std_x = 5
+        reconDetectionMap_std_y = 5
+
         scoreMap = torch.ones(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3])
-        #print("-----scoreMap.shape-----: ", scoreMap.shape)
         reconDetectionMap = torch.ones(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3])
         _, keypoints_num_sz, _ = keypoints.shape
 
@@ -91,47 +94,18 @@ class ReconDetectionConfidenceMap(nn.Module):
 
         gaussian_distribution_den = 1 / (2 * np.pi * reconDetectionMap_std_x * reconDetectionMap_std_y * np.sqrt(1 - (correlation ** 2)))
         gaussian_distribution_num_1 = -1 / (2 * (1 - (correlation ** 2)))
-        #print("ReconDetectionMap Setup time: ", time.time() - start)
-
-        start2 = time.time()
-        """
-        DetectionMap_sz_0, DetectionMap_sz_1, DetectionMap_sz_2, DetectionMap_sz_3 = DetectionMap.shape
-        for b in range(DetectionMap_sz_0):
-            for k in range(keypoints_num_sz):
-                my_y = keypoints[b, k, 1]
-                my_x = keypoints[b, k, 0]
-                for i in range(DetectionMap_sz_2): #height (y)
-                    for j in range(DetectionMap_sz_3): #width (x)
-                        gaussian_distribution_num_2 = ((i-my_y)**2 / reconDetectionMap_std_y**2) + ((j - my_x)**2 / reconDetectionMap_std_x**2) - (2*correlation*(i - my_y)*(j - my_x)/(reconDetectionMap_std_x*reconDetectionMap_std_y))
-                        scoreMap[b, k, i, j] = gaussian_distribution_den * torch.exp(gaussian_distribution_num_1*gaussian_distribution_num_2)
-        """
 
         DetectionMap_sz_0, DetectionMap_sz_1, DetectionMap_sz_2, DetectionMap_sz_3 = DetectionMap.shape
         for i in range(DetectionMap_sz_2): #height (y)
             for j in range(DetectionMap_sz_3): #width (x)
                 gaussian_distribution_num_2 = ((i - keypoints[:, :, 1])**2 / reconDetectionMap_std_y**2) + ((j - keypoints[:, :, 0])**2 / reconDetectionMap_std_x**2) - (2*correlation*(i - keypoints[:, :, 1])*(j - keypoints[:, :, 0])/(reconDetectionMap_std_x*reconDetectionMap_std_y))
-                #print("****", (gaussian_distribution_den * torch.exp(gaussian_distribution_num_1 * gaussian_distribution_num_2)).shape)
                 scoreMap[:, :, i, j] = gaussian_distribution_den * torch.exp(gaussian_distribution_num_1 * gaussian_distribution_num_2)
-
-        #print("Gaussian distribution generation time: ", time.time() - start2)
 
         cur_rk_all = scoreMap.sum(1) #(b, 96, 128)
 
-        #cur_rk_all = torch.zeros(DetectionMap_sz_0, DetectionMap_sz_2, DetectionMap_sz_3)
-        #for b in range(DetectionMap_sz_0):
-        #    cur_rk_all[b, :, :] = torch.sum(scoreMap[b, :, :, :], dim=0)  # (b, 96,128)
-        start3 = time.time()
         for k in range(keypoints_num_sz):
-            reconDetectionMap[:, k, :, :] = scoreMap[:, k, :, :]/ (cur_rk_all+epsilon_scale)
-        #print("get reconstructed detection map: ", time.time() - start3)
+            reconDetectionMap[:, k, :, :] = scoreMap[:, k, :, :]/ (cur_rk_all + epsilon_scale)
 
-        """
-        for b in range(DetectionMap_sz_0):
-            for i in range(DetectionMap_sz_2):
-                for j in range(DetectionMap_sz_3):
-                    for k in range(keypoints_num_sz):
-                        reconDetectionMap[b, k, i, j] = (scoreMap[b, k, i, j] /(cur_rk_all[b, i, j] + epsilon_scale))
-        """
 
         return reconDetectionMap
 
@@ -139,40 +113,7 @@ class create_softmask (nn.Module):
     def __init__(self):
         super(create_softmask, self).__init__()
 
-    def forward(self, dev_x, dev_y, keypoints, DetectionMap, zeta):
-        """
-        get_std = torch.zeros_like(DetectionMap)
-        std_x = torch.zeros_like(DetectionMap)
-        std_y = torch.zeros_like(DetectionMap)
-        dev = torch.zeros_like(DetectionMap)
-        cov_softmask = torch.zeros(DetectionMap.shape[0], 2, 2)
-        softmask = torch.zeros(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2])
-        correlation = 0.5
-
-        for k in range(DetectionMap.shape[0]):
-            get_std[k] = DetectionMap[k, :, :]/zeta[k]
-            std_x[k] = torch.var(torch.var(get_std, 1))
-            std_y[k] = torch.var(torch.var(get_std, 0))
-            dev[k] = 0.5*(std_x[k]**2 + std_y[k]**2)
-            cov_softmask[k, 0, 0] = std_x[k] ** 2
-            cov_softmask[k, 0, 1] = correlation * std_x[k] * std_y[k]
-            cov_softmask[k, 1, 0] = cov_softmask[k, 0, 1]
-            cov_softmask[k, 1, 1] = std_y[k] ** 2
-            gaussian_distribution_den = 1 / (2 * np.pi * std_x[k] * std_y[k] * np.sqrt(1 - (correlation * correlation)))
-            gaussian_distribution_num_1 = -1 / (2 * (1 - (correlation * correlation)))
-
-            for i in range(DetectionMap.shape[1]):
-                for j in range(DetectionMap.shape[2]):
-                    gaussian_distribution_num_2 = ((i-keypoints[k, 1])**2 / std_y[k] ** 2) + ((j - keypoints[k, 0])**2 / std_x[k] **2) - (2*correlation*(i - keypoints[k, 1])*(j - keypoints[k, 0])/(std_x[k] *std_y[k]))
-                    gaussian_distribution_softmask = gaussian_distribution_den * torch.exp(gaussian_distribution_num_1*gaussian_distribution_num_2)
-                    softmask[k, i, j] = gaussian_distribution_softmask.item()
-
-                    if ((softmask[k, i, j] < 0) or (softmask[k, i, j] > 1)):
-                        print("---OUT OF RANGE---")
-
-        softmask = softmask / (DetectionMap.shape[1] * DetectionMap.shape[2])
-        """
-
+    def forward(self, DetectionMap, zeta):
         softmask = torch.zeros_like(DetectionMap)
         detectionmap_sz_0, detectionmap_sz_1, _, _ = DetectionMap.shape
         for b in range(detectionmap_sz_0):

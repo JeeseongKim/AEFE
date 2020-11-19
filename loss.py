@@ -8,26 +8,28 @@ class loss_concentration(nn.Module):
     def __init__(self):
         super(loss_concentration, self).__init__()
 
-    def forward(self, DetectionMap, zeta):
-        conc_loss = 0
-        get_std = torch.zeros_like(DetectionMap)
-        std_x = torch.zeros(DetectionMap.shape[0], DetectionMap.shape[1])
-        std_y = torch.zeros(DetectionMap.shape[0], DetectionMap.shape[1])
-        #dev = torch.zeros(DetectionMap.shape[0])
-        for b in range(DetectionMap.shape[0]):
-            for k in range(DetectionMap.shape[1]):
-                get_std[b, k, :, :] = DetectionMap[b, k, :, :] / zeta[b, k]
-                std_x[b, k] = torch.var(torch.var(get_std[b, k, :, :], 1))
-                #print("std_x", std_x[b, k])
-                std_y[b, k] = torch.var(torch.var(get_std[b, k, :, :], 0))
-                #print("std_y", std_y[b, k])
-                #dev[k] = 0.5 * (std_x[k] ** 2 + std_y[k] ** 2)
-                cur_loss = 2 * math.pi * math.exp(std_x[b, k]) + math.exp(std_y[b, k])
-                #cur_loss = std_x[b, k] + std_y[b, k]
-                #print(cur_loss)
+    def forward(self, softmask):
+        dmap_sz_0, dmap_sz_1, _, _ = softmask.shape #(b, k, 96, 128)
+
+        #var = torch.var(softmask)
+        #conc_loss = torch.tensor(2 * math.pi * torch.exp(var))
+
+        var_x = torch.var(torch.var(softmask, 1))
+        var_y = torch.var(torch.var(softmask, 0))
+        conc_loss = torch.tensor(2 * math.pi * (torch.exp(var_x) + torch.exp(var_y)))
+
+
+        """
+        for b in range(dmap_sz_0):
+            for k in range(dmap_sz_1):
+                cur_std_xy = DetectionMap[b, k, :, :] / zeta[b, k] #(96,128)
+                std_x = torch.var(torch.var(cur_std_xy, 1))
+                std_y = torch.var(torch.var(cur_std_xy, 0))
+                #print("std_x: ", std_x.item(), "std_y: ", std_y.item())
+                #cur_loss = 2 * math.pi * (torch.exp(std_x) + torch.exp(std_y))
+                cur_loss = 2 * math.pi * (torch.log(std_x) + torch.log(std_y))
                 conc_loss = conc_loss + cur_loss
-        #print(conc_loss)
-        conc_loss = torch.tensor(conc_loss)
+        """
         return conc_loss
 
 class loss_separation(nn.Module):
@@ -53,4 +55,17 @@ class loss_separation(nn.Module):
                         sep_loss = sep_loss + cur_loss
         #print(sep_loss)
         return sep_loss
+
+class loss_reconstruction(nn.Module):
+    def __init__(self):
+        super(loss_reconstruction, self).__init__()
+
+    def forward(self, reconImg, aefe_input):
+        std_color = 0.05
+        std_color_2 = std_color ** 2
+
+        recon_loss = (((aefe_input - reconImg) ** 2) / std_color_2).sum() + torch.log(torch.tensor(2 * math.pi * std_color_2))
+
+        return recon_loss
+
 
