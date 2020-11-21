@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 import time
+import cv2
 
 pre_width = 128
 pre_height = 96
@@ -61,12 +62,12 @@ class DetectionConfidenceMap2keypoint(nn.Module):
                 keypoint[b, k, 0] = int(torch.round((get_kp_x[b, k] / get_zeta[b, k])))
                 keypoint[b, k, 1] = int(torch.round((get_kp_y[b, k] / get_zeta[b, k])))
                 #print("kp:", keypoint[b, k, 0], "  ", keypoint[b, k, 1])
+                """
                 if ((keypoint[b, k, 0] > pre_width)):  # or (keypoint[b, k, 0] < 0)):
                     keypoint[b, k, 0] = int(pre_width * 0.5)
                 if ((keypoint[b, k, 1] > pre_height)):  # or (keypoint[b, k, 1] < 0)):
                     keypoint[b, k, 1] = int(pre_height * 0.5)
-
-
+                """
         #print("kp_gen time: ", time.time() - start_get)
         return map_val_all, keypoint, get_zeta
 
@@ -80,13 +81,13 @@ class ReconDetectionConfidenceMap(nn.Module):
         reconDetectionMap_std_x = 5
         reconDetectionMap_std_y = 5
 
-        scoreMap = torch.ones(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3])
-        reconDetectionMap = torch.ones(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3])
+        scoreMap = torch.ones(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3]).cuda()
+        reconDetectionMap = torch.ones(DetectionMap.shape[0], DetectionMap.shape[1], DetectionMap.shape[2], DetectionMap.shape[3]).cuda()
         _, keypoints_num_sz, _ = keypoints.shape
 
         epsilon_scale = 1e-5
 
-        cov = torch.zeros(2, 2)
+        cov = torch.zeros(2, 2).cuda()
         cov[0, 0] = reconDetectionMap_std_x ** 2
         cov[0, 1] = correlation * reconDetectionMap_std_x * reconDetectionMap_std_y
         cov[1, 0] = cov[0, 1]
@@ -103,8 +104,8 @@ class ReconDetectionConfidenceMap(nn.Module):
 
         cur_rk_all = scoreMap.sum(1) #(b, 96, 128)
 
-        for k in range(keypoints_num_sz):
-            reconDetectionMap[:, k, :, :] = scoreMap[:, k, :, :]/ (cur_rk_all + epsilon_scale)
+        #for k in range(keypoints_num_sz):
+        reconDetectionMap = scoreMap /(cur_rk_all.unsqueeze(1)+epsilon_scale)
 
 
         return reconDetectionMap

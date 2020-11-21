@@ -8,7 +8,7 @@ from PIL import Image
 import glob
 from torchvision import transforms
 import cv2
-
+from torchvision.utils import save_image
 
 class make_transformation_M (nn.Module):
     def __init__(self):
@@ -35,9 +35,9 @@ class make_transformation_M (nn.Module):
 
 class my_dataset(Dataset):
     def __init__(self):
-        self.img_filename = []
         self.dataset_img = []
         self.dataset_filename = []
+        self.kp_img = []
         #whole_flist = sorted(glob.glob('./data/*.jpg'))
         input_height = 192
         input_width = 256
@@ -49,11 +49,30 @@ class my_dataset(Dataset):
 
             self.dataset_img.append(img_tensor_input)
             self.dataset_filename.append(filename.split('.')[1].split('/')[2])
+            self.kp_img.append(img_rsz)
 
         self.len = len(self.dataset_img)
 
     def __getitem__(self, index):
-        return self.dataset_img[index], self.dataset_filename[index]
+        return self.dataset_img[index], self.dataset_filename[index], self.kp_img[index]
 
     def __len__(self):
         return len(self.dataset_img)
+
+class saveKPimg(nn.Module):
+    def __init__(self):
+        super(saveKPimg, self).__init__()
+
+    def forward(self, kp_img, keypoints, epoch, cur_filename):
+        batch_size, kp_num, _ = keypoints.shape
+        for b in range(batch_size):
+            cur_img = kp_img[b, :, :, :].numpy()
+            cur_kp = keypoints[b, :, :]
+            for i in range(kp_num):
+                if(i==0):
+                    kpimg = cv2.circle(cur_img, tuple(cur_kp[i, :]), 2, (0, 0, 255), -1)
+                else:
+                    kpimg = cv2.circle(kpimg, tuple(cur_kp[i, :]), 2, (0, 0, 255), -1)
+            save_kpimg = transforms.ToTensor()(kpimg).unsqueeze(0) # (1,3,192,256)
+            img_save_filename = ("SaveKPImg/%s_epoch_%s.jpg" % (cur_filename[b], epoch))
+            save_image(save_kpimg, img_save_filename)
