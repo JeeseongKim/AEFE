@@ -10,9 +10,13 @@ class StackedHourglassForKP(nn.Module):
         self.nstack = nstack
 
         self.pre = nn.Sequential(
-            Conv(3, 64, 3, 1, bn=True, relu=True),
+            #Conv(3, 64, 3, 1, bn=True, relu=True),
+            Conv(3, 8, 3, 1, bn=True, relu=True),
+            Conv(8, 16, 3, 1, bn=True, relu=True),
+            Conv(16, 32, 3, 1, bn=True, relu=True),
+            Conv(32, 64, 3, 1, bn=True, relu=True),
             Residual(64, 128),
-            Pool(2, 2),
+            ##Pool(2, 2),
             Residual(128, 128),
             Residual(128, inp_dim)
         )
@@ -43,8 +47,8 @@ class StackedHourglassForKP(nn.Module):
         ])
 
     def forward(self, imgs):
-        x = imgs #(b,3,192,256)
-        x = self.pre(x) #(b,256,96,128)
+        x = imgs #(b,3,96, 128) #(b, 3, 57, 192)
+        x = self.pre(x) #(b,192,96,128) #(b, 192, 57, 192)
         combined_hm_preds = []
         append = combined_hm_preds.append
         for i in range(self.nstack):
@@ -86,16 +90,16 @@ class StackedHourglassImgRecon(nn.Module):
             nn.Sequential(
                 #Conv(inp_dim, oup_dim, 1, relu=False, bn=False), #(256 -> 3)
                 Conv(inp_dim, 128, 1, relu=False, bn=False),
-                #nn.BatchNorm2d(128),
-                #Conv(128, 128, 1, relu=False, bn=False),
+                ##nn.BatchNorm2d(128),
+                Conv(128, 128, 1, relu=False, bn=False),
                 Conv(128, 64, 1, relu=False, bn=False),
-                #Conv(64, 64, 1, relu=False, bn=False),
+                Conv(64, 64, 1, relu=False, bn=False),
                 Conv(64, 32, 1, relu=False, bn=False),
-                #Conv(32, 32, 1, relu=False, bn=False),
+                Conv(32, 32, 1, relu=False, bn=False),
                 Conv(32, 16, 1, relu=False, bn=False),
-                #Conv(16, 16, 1, relu=False, bn=False),
+                Conv(16, 16, 1, relu=False, bn=False),
                 Conv(16, 8, 1, relu=True, bn=False),
-                #Conv(8, 8, 1, relu=False, bn=False),
+                Conv(8, 8, 1, relu=False, bn=False),
                 Conv(8, 3, 1, relu=True, bn=False)
                 #nn.BatchNorm2d(3)
         ) for i in range(nstack)
@@ -112,8 +116,8 @@ class StackedHourglassImgRecon(nn.Module):
     def forward(self, concat_recon):
         x = concat_recon #(b, 2n, 96, 128)
         x = self.pre(x) #(b, 256, 96, 128)
-        model_upsample = upsample_recon(2, mode='bilinear', align_corners=True)
-        x = model_upsample(x) #(b,256,192,256)
+        #model_upsample = upsample_recon(2, mode='bilinear', align_corners=True)
+        #x = model_upsample(x) #(b,256,192,256)
         combined_hm_preds = []
         append = combined_hm_preds.append
         for i in range(self.nstack):
